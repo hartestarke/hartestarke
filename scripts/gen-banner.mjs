@@ -29,11 +29,13 @@ const SAT = { base: 0.8, lift: 0.35, alpha0: 0.4, alpha1: 0.45 };
 // fx/fy are cycles per banner WIDTH on both axes (pixel-isotropic — per-axis
 // normalization on a 4:1 banner squashes the lobes flat); k is integer cycles
 // per loop, which keeps the seam exact. |[fx,fy]| ~1 = lobe about a banner
-// width across; directions spread ~60° apart so the boundary curves.
+// width across; directions spread ~60° apart so the boundary curves. Every
+// |k| is distinct — components sharing a speed keep a constant relative
+// phase, and their interference freezes into a shape that merely translates.
 const FIELD = [
   { fx: 0.75, fy: 0.55, k: 1 },
   { fx: -0.35, fy: 0.95, k: -1 },
-  { fx: 0.95, fy: -0.4, k: 1 },
+  { fx: 0.95, fy: -0.4, k: 2 },
 ];
 const GAMMA = 1.35; // >1 deepens the dark side of the gradient
 const DRIVE = 2.4; // sum of 3 sines rarely hits ±3; dividing by less than 3
@@ -45,8 +47,8 @@ const [, , argOut] = process.argv;
 const FONT = 14; // glyph font-size, px
 const PX = FONT * 0.6; // column pitch = monospace advance (0.6em), enforced via textLength
 const PY = 16; // row pitch
-const FPS = 5; // flipbook rate; ASCII reads better chunky than smooth
-const DUR = 12; // loop seconds — wave speeds are integer cycles per DUR, so the seam is exact
+const FPS = 3; // flipbook rate; the field drifts slowly enough that 3 is smooth
+const DUR = 24; // loop seconds — wave speeds are integer cycles per DUR, so the seam is exact
 // FPS*DUR is the DOM cost every profile visitor pays (frames × ~40 text nodes
 // each, alive for the lifetime of the tab) — keep the product modest.
 const STILL_T = 7; // prefers-reduced-motion shows this moment (same pick as app.js)
