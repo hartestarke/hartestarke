@@ -30,12 +30,14 @@ const SAT = { base: 0.8, lift: 0.35, alpha0: 0.4, alpha1: 0.45 };
 // normalization on a 4:1 banner squashes the lobes flat); k is integer cycles
 // per loop, which keeps the seam exact. |[fx,fy]| ~1 = lobe about a banner
 // width across; directions spread ~60° apart so the boundary curves. Every
-// |k| is distinct — components sharing a speed keep a constant relative
+// k is distinct — components sharing a speed keep a constant relative
 // phase, and their interference freezes into a shape that merely translates.
+// k=0 is a legal speed: the two movers morph against the frozen one, and the
+// fastest anything moves is one cycle per DUR.
 const FIELD = [
   { fx: 0.75, fy: 0.55, k: 1 },
   { fx: -0.35, fy: 0.95, k: -1 },
-  { fx: 0.95, fy: -0.4, k: 2 },
+  { fx: 0.95, fy: -0.4, k: 0 },
 ];
 const GAMMA = 1.35; // >1 deepens the dark side of the gradient
 const DRIVE = 2.4; // sum of 3 sines rarely hits ±3; dividing by less than 3
