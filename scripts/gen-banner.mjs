@@ -47,8 +47,8 @@ const [, , argOut] = process.argv;
 const FONT = 14; // glyph font-size, px
 const PX = FONT * 0.6; // column pitch = monospace advance (0.6em), enforced via textLength
 const PY = 16; // row pitch
-const FPS = 3; // flipbook rate; the field drifts slowly enough that 3 is smooth
-const DUR = 24; // loop seconds — wave speeds are integer cycles per DUR, so the seam is exact
+const FPS = 5; // flipbook rate; 3 reads as a jerky slideshow, 5 is the floor
+const DUR = 20; // loop seconds — wave speeds are integer cycles per DUR, so the seam is exact
 // FPS*DUR is the DOM cost every profile visitor pays (frames × ~40 text nodes
 // each, alive for the lifetime of the tab) — keep the product modest.
 const STILL_T = 7; // prefers-reduced-motion shows this moment (same pick as app.js)
