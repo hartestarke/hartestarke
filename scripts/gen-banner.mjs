@@ -45,8 +45,10 @@ const [, , argOut] = process.argv;
 const FONT = 14; // glyph font-size, px
 const PX = FONT * 0.6; // column pitch = monospace advance (0.6em), enforced via textLength
 const PY = 16; // row pitch
-const FPS = 6; // flipbook rate; ASCII reads better chunky than smooth
-const DUR = 16; // loop seconds — wave speeds are integer cycles per DUR, so the seam is exact
+const FPS = 5; // flipbook rate; ASCII reads better chunky than smooth
+const DUR = 12; // loop seconds — wave speeds are integer cycles per DUR, so the seam is exact
+// FPS*DUR is the DOM cost every profile visitor pays (frames × ~40 text nodes
+// each, alive for the lifetime of the tab) — keep the product modest.
 const STILL_T = 7; // prefers-reduced-motion shows this moment (same pick as app.js)
 
 // Brightness ramp from app.js: heavier glyph = brighter spot, variants per
@@ -100,11 +102,16 @@ const palette = (hex) => {
 };
 
 // ---- bake ------------------------------------------------------------------
-const COLS = Math.floor(W / PX);
+// Rows are plain text: within one monospace font every row lines up on its
+// own, so nothing pins the pitch (textLength did once — its per-glyph spacing
+// re-layout on every frame was a real CPU/RAM tax on visitors). The advance
+// just varies by viewer font, so overscan the columns for the narrowest
+// mainstream mono (0.55em, Consolas) and let the SVG viewport clip the rest.
+const COLS = Math.ceil(W / (FONT * 0.55));
 const ROWS = Math.floor(H / PY);
 const NF = FPS * DUR;
 const STILL = Math.round(STILL_T * FPS) % NF;
-const x0 = (W - COLS * PX) / 2;
+const x0 = 0;
 const y0 = (H - ROWS * PY) / 2;
 const esc = (s) => s.replace(/&/g, "&amp;");
 
@@ -134,11 +141,7 @@ for (let f = 0; f < NF; f++) {
       s = s.replace(/\s+$/, "");
       if (!s) continue;
       const y = (y0 + row * PY + PY / 2).toFixed(1);
-      // textLength pins the column pitch even when the viewer's monospace
-      // font has a different advance width.
-      rows.push(
-        `<text class="b${bi}" x="${x0.toFixed(1)}" y="${y}" textLength="${(s.length * PX).toFixed(1)}" lengthAdjust="spacing" xml:space="preserve">${esc(s)}</text>`,
-      );
+      rows.push(`<text class="b${bi}" x="${x0}" y="${y}" xml:space="preserve">${esc(s)}</text>`);
     }
   }
   const still = f === STILL ? " f-still" : "";
