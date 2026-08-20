@@ -16,7 +16,12 @@ const W = 880; // viewBox size; README scales it down responsively
 const H = 220;
 const ACCENT = "#E62D42";
 const CANVAS = "#07080A"; // catc_hub page canvas
-const NAME = "hartestarke"; // set to "" for a pure field, no overlay
+const TAGLINE = "any problem, given time"; // set to "" for a pure field, no overlay
+// Palette shape: how much of the accent survives at the bottom of the ramp
+// (base), how hard the top lifts towards white (lift), and the opacity ramp.
+// catc_hub ran 0.55/0.5/0.14+0.5t as a faint backdrop behind product shots;
+// here the field IS the artwork, so it gets more pigment.
+const SAT = { base: 0.8, lift: 0.35, alpha0: 0.4, alpha1: 0.45 };
 const FONT = 14; // glyph font-size, px
 const PX = FONT * 0.6; // column pitch = monospace advance (0.6em), enforced via textLength
 const PY = 16; // row pitch
@@ -61,15 +66,15 @@ const wave = (x, y, ph) => {
   return Math.pow(Math.min(1, Math.max(0, (v + 3) / 6)), 1.6);
 };
 
-// Palette from app.js: accent dim and translucent at the bottom of the ramp,
-// lifted towards white at the top.
+// Palette from app.js, reshaped by SAT: accent translucent at the bottom of
+// the ramp, lifted towards white at the top.
 const palette = (hex) => {
   const n = parseInt(hex.slice(1), 16);
   const c = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
   return RAMP.map((_, i) => {
     const t = i / (RAMP.length - 1);
-    const ch = (v) => Math.round(v * 0.55 + t * (v * 0.45 + (255 - v) * 0.5));
-    return `rgb(${ch(c[0])} ${ch(c[1])} ${ch(c[2])} / ${(0.14 + 0.5 * t).toFixed(2)})`;
+    const ch = (v) => Math.round(v * SAT.base + t * (v * (1 - SAT.base) + (255 - v) * SAT.lift));
+    return `rgb(${ch(c[0])} ${ch(c[1])} ${ch(c[2])} / ${(SAT.alpha0 + SAT.alpha1 * t).toFixed(2)})`;
   });
 };
 
@@ -127,20 +132,22 @@ const pal = palette(ACCENT);
 const bandFills = BANDS.map((b, i) => `.b${i}{fill:${pal[b.rep]}}`).join("");
 const slot = ((100 / NF).toFixed(4) * 1).toString();
 
-const overlay = NAME
-  ? `<ellipse cx="${W / 2}" cy="${H / 2}" rx="${W * 0.3}" ry="${H * 0.36}" fill="url(#scrim)"/>` +
-    `<text class="name" x="${W / 2}" y="${H / 2}">${NAME}<tspan class="cur">_</tspan></text>`
+// Block caret, not underscore — the user's console/IDE taste. U+2588 is safe:
+// every mainstream monospace ships it, and it is the last glyph anyway.
+const overlay = TAGLINE
+  ? `<ellipse cx="${W / 2}" cy="${H / 2}" rx="${W * 0.36}" ry="${H * 0.36}" fill="url(#scrim)"/>` +
+    `<text class="name" x="${W / 2}" y="${H / 2}">${TAGLINE}<tspan class="cur">█</tspan></text>`
   : "";
 
-const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${NAME || "ASCII plasma field"}">
-<title>${NAME || "ASCII plasma field"}</title>
+const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${TAGLINE || "ASCII plasma field"}">
+<title>${TAGLINE || "ASCII plasma field"}</title>
 <style>
 text{font-family:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;text-rendering:optimizeSpeed;white-space:pre}
 .f text{font-size:${FONT}px;dominant-baseline:central}
 ${bandFills}
 .f{visibility:hidden;animation:k ${DUR}s step-end infinite}
 @keyframes k{0%{visibility:visible}${slot}%{visibility:hidden}100%{visibility:hidden}}
-.name{font-size:34px;fill:#F5F6F8;dominant-baseline:central;text-anchor:middle;letter-spacing:1.5px}
+.name{font-size:30px;fill:#F5F6F8;dominant-baseline:central;text-anchor:middle;letter-spacing:1.5px}
 .cur{fill:${ACCENT};animation:blink 1.1s step-end infinite}
 @keyframes blink{50%{opacity:0}}
 @media (prefers-reduced-motion:reduce){.f,.cur{animation:none}.f-still{visibility:visible}}
