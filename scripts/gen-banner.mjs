@@ -22,9 +22,26 @@ const TAGLINE = "any problem, given time"; // set to "" for a pure field, no ove
 // catc_hub ran 0.55/0.5/0.14+0.5t as a faint backdrop behind product shots;
 // here the field IS the artwork, so it gets more pigment.
 const SAT = { base: 0.8, lift: 0.35, alpha0: 0.4, alpha1: 0.45 };
-// Feature scale: wave coords are normalized by ZOOM*H. 1 = blob per ~230px
-// (reads busy on a 4:1 banner); bigger = larger, calmer blobs.
-const ZOOM = 1.6;
+// Liquid-gradient field, after the user's reference (liquid_gradient.jpg):
+// a few plane waves, each under one period across the banner and pointed in
+// different directions, interfere into one or two giant soft lobes with
+// curved boundaries. The glyph ramp plus jitter dithering supplies the grain.
+// fx/fy are cycles per banner WIDTH on both axes (pixel-isotropic — per-axis
+// normalization on a 4:1 banner squashes the lobes flat); k is integer cycles
+// per loop, which keeps the seam exact. |[fx,fy]| ~1 = lobe about a banner
+// width across; directions spread ~60° apart so the boundary curves.
+const FIELD = [
+  { fx: 0.75, fy: 0.55, k: 1 },
+  { fx: -0.35, fy: 0.95, k: -1 },
+  { fx: 0.95, fy: -0.4, k: 1 },
+];
+const GAMMA = 1.35; // >1 deepens the dark side of the gradient
+const DRIVE = 2.4; // sum of 3 sines rarely hits ±3; dividing by less than 3
+// (with a clamp) restores saturated highlights and deep troughs
+
+// Dev override for comparing variants side by side:
+//   node scripts/gen-banner.mjs [out.svg]
+const [, , argOut] = process.argv;
 const FONT = 14; // glyph font-size, px
 const PX = FONT * 0.6; // column pitch = monospace advance (0.6em), enforced via textLength
 const PY = 16; // row pitch
@@ -62,11 +79,12 @@ const jitter = (i) => {
   return (((x ^ (x >>> 16)) >>> 0) % 1024) / 1024;
 };
 
-// Same three travelling waves; speeds became integer cycles per loop (2:-1:1,
-// nearest small integers to the original 4:-3:2) so frame N wraps to frame 0.
-const wave = (x, y, ph) => {
-  const v = Math.sin(x * 6.0 + ph * 2) + Math.sin(y * 8.0 - ph) + Math.sin((x + y) * 5.0 + ph);
-  return Math.pow(Math.min(1, Math.max(0, (v + 3) / 6)), 1.6);
+// x, y in units of banner width, t in [0,1) across the loop.
+const TAU = Math.PI * 2;
+const wave = (x, y, t) => {
+  let v = 0;
+  for (const { fx, fy, k } of FIELD) v += Math.sin(TAU * (fx * x + fy * y + k * t));
+  return Math.pow(Math.min(1, Math.max(0, (v / DRIVE + 1) / 2)), GAMMA);
 };
 
 // Palette from app.js, reshaped by SAT: accent translucent at the bottom of
@@ -86,25 +104,19 @@ const COLS = Math.floor(W / PX);
 const ROWS = Math.floor(H / PY);
 const NF = FPS * DUR;
 const STILL = Math.round(STILL_T * FPS) % NF;
-const TAU = Math.PI * 2;
 const x0 = (W - COLS * PX) / 2;
 const y0 = (H - ROWS * PY) / 2;
 const esc = (s) => s.replace(/&/g, "&amp;");
 
 const frames = [];
 for (let f = 0; f < NF; f++) {
-  const ph = (TAU * f) / NF;
+  const t = f / NF;
   const rows = [];
   for (let row = 0; row < ROWS; row++) {
     const level = [];
     for (let col = 0; col < COLS; col++) {
       const i = row * COLS + col;
-      // Both axes are normalized by the same length, not each by its own
-      // extent: catc_hub's posters are near-square so x/W,y/H is isotropic
-      // there, but on a 4:1 banner it stretches the blobs into pancakes.
-      const S = H * ZOOM;
-      const b =
-        wave(((col + 0.5) * PX) / S, ((row + 0.5) * PY) / S, ph) + jitter(i) * 0.1 - 0.05;
+      const b = wave(((col + 0.5) * PX) / W, ((row + 0.5) * PY) / W, t) + jitter(i) * 0.1 - 0.05;
       level.push(Math.min(RAMP.length - 1, Math.max(0, Math.floor(b * RAMP.length))));
     }
     // One <text> per colour band per row: band glyphs in place, spaces
@@ -166,7 +178,7 @@ ${overlay}
 </svg>
 `;
 
-const out = join(dirname(fileURLToPath(import.meta.url)), "..", "banner.svg");
+const out = argOut ?? join(dirname(fileURLToPath(import.meta.url)), "..", "banner.svg");
 writeFileSync(out, svg);
 const raw = Buffer.byteLength(svg);
 console.log(
