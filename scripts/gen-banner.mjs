@@ -96,8 +96,11 @@ for (let f = 0; f < NF; f++) {
     const level = [];
     for (let col = 0; col < COLS; col++) {
       const i = row * COLS + col;
+      // Both axes are normalized by H, not by their own extent: catc_hub's
+      // posters are near-square so x/W,y/H is isotropic there, but on a 4:1
+      // banner it stretches the blobs into pancakes.
       const b =
-        wave(((col + 0.5) * PX) / W, ((row + 0.5) * PY) / H, ph) + jitter(i) * 0.1 - 0.05;
+        wave(((col + 0.5) * PX) / H, ((row + 0.5) * PY) / H, ph) + jitter(i) * 0.1 - 0.05;
       level.push(Math.min(RAMP.length - 1, Math.max(0, Math.floor(b * RAMP.length))));
     }
     // One <text> per colour band per row: band glyphs in place, spaces
