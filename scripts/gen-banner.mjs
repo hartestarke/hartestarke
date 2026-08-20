@@ -22,6 +22,9 @@ const TAGLINE = "any problem, given time"; // set to "" for a pure field, no ove
 // catc_hub ran 0.55/0.5/0.14+0.5t as a faint backdrop behind product shots;
 // here the field IS the artwork, so it gets more pigment.
 const SAT = { base: 0.8, lift: 0.35, alpha0: 0.4, alpha1: 0.45 };
+// Feature scale: wave coords are normalized by ZOOM*H. 1 = blob per ~230px
+// (reads busy on a 4:1 banner); bigger = larger, calmer blobs.
+const ZOOM = 1.6;
 const FONT = 14; // glyph font-size, px
 const PX = FONT * 0.6; // column pitch = monospace advance (0.6em), enforced via textLength
 const PY = 16; // row pitch
@@ -96,11 +99,12 @@ for (let f = 0; f < NF; f++) {
     const level = [];
     for (let col = 0; col < COLS; col++) {
       const i = row * COLS + col;
-      // Both axes are normalized by H, not by their own extent: catc_hub's
-      // posters are near-square so x/W,y/H is isotropic there, but on a 4:1
-      // banner it stretches the blobs into pancakes.
+      // Both axes are normalized by the same length, not each by its own
+      // extent: catc_hub's posters are near-square so x/W,y/H is isotropic
+      // there, but on a 4:1 banner it stretches the blobs into pancakes.
+      const S = H * ZOOM;
       const b =
-        wave(((col + 0.5) * PX) / H, ((row + 0.5) * PY) / H, ph) + jitter(i) * 0.1 - 0.05;
+        wave(((col + 0.5) * PX) / S, ((row + 0.5) * PY) / S, ph) + jitter(i) * 0.1 - 0.05;
       level.push(Math.min(RAMP.length - 1, Math.max(0, Math.floor(b * RAMP.length))));
     }
     // One <text> per colour band per row: band glyphs in place, spaces
