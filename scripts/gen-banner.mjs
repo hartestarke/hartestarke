@@ -13,10 +13,23 @@ import { fileURLToPath } from "node:url";
 
 // ---- knobs -----------------------------------------------------------------
 const W = 880; // viewBox size; README scales it down responsively
-const H = 220;
+const H = 240;
 const ACCENT = "#E62D42";
 const CANVAS = "#07080A"; // catc_hub page canvas
-const TAGLINE = "any problem, given time"; // set to "" for a pure field, no overlay
+const TAGLINES = [
+  "any problem, given time",
+  "exploring the edge of the possible",
+  "in search of new stars",
+  "teaching metal to dream",
+]; // rotation order; [] for a pure field, no overlay
+// Decode rotation: each line spends DECODE_T cycling through field glyphs,
+// locks in left to right, holds for HOLD_T, then the next line starts
+// cycling. Scrambled positions wear the accent, locked ones the name white.
+// The text loop is TAGLINES.length slots long and free-runs against the
+// field loop — the two never need to sync.
+const DECODE_T = 2.2; // seconds of glyph-cycling before a line settles
+const HOLD_T = 5.8; // seconds a settled line stays before the next one cycles in
+const TFPS = 20; // decode flip rate, independent of the field FPS; reads as noise below ~15
 // Palette shape: how much of the accent survives at the bottom of the ramp
 // (base), how hard the top lifts towards white (lift), and the opacity ramp.
 // catc_hub ran 0.55/0.5/0.14+0.5t as a faint backdrop behind product shots;
@@ -49,7 +62,9 @@ const [, , argOut] = process.argv;
 const FONT = 14; // glyph font-size, px
 const PX = FONT * 0.6; // column pitch = monospace advance (0.6em), enforced via textLength
 const PY = 16; // row pitch
-const FPS = 5; // flipbook rate; 3 reads as a jerky slideshow, 5 is the floor
+const FPS = 10; // flipbook rate; 10 steps the field about half a glyph column per
+// flip — the finest motion the character grid can express, and the ceiling the
+// 1 MB raw budget allows at this height
 const DUR = 20; // loop seconds — wave speeds are integer cycles per DUR, so the seam is exact
 // FPS*DUR is the DOM cost every profile visitor pays (frames × ~40 text nodes
 // each, alive for the lifetime of the tab) — keep the product modest.
@@ -115,9 +130,12 @@ const COLS = Math.ceil(W / (FONT * 0.55));
 const ROWS = Math.floor(H / PY);
 const NF = FPS * DUR;
 const STILL = Math.round(STILL_T * FPS) % NF;
-const x0 = 0;
 const y0 = (H - ROWS * PY) / 2;
 const esc = (s) => s.replace(/&/g, "&amp;");
+// Attribute bytes repeat per text node (thousands of them), so every one is
+// trimmed: x defaults to 0, xml:space is inherited from the root svg, and y
+// keeps its decimal only when the grid doesn't land on a whole pixel.
+const fy = (v) => (v % 1 ? v.toFixed(1) : String(v));
 
 const frames = [];
 for (let f = 0; f < NF; f++) {
@@ -144,8 +162,8 @@ for (let f = 0; f < NF; f++) {
       }
       s = s.replace(/\s+$/, "");
       if (!s) continue;
-      const y = (y0 + row * PY + PY / 2).toFixed(1);
-      rows.push(`<text class="b${bi}" x="${x0}" y="${y}" xml:space="preserve">${esc(s)}</text>`);
+      const y = fy(y0 + row * PY + PY / 2);
+      rows.push(`<text class="b${bi}" y="${y}">${esc(s)}</text>`);
     }
   }
   const still = f === STILL ? " f-still" : "";
@@ -158,15 +176,36 @@ const pal = palette(ACCENT);
 const bandFills = BANDS.map((b, i) => `.b${i}{fill:${pal[b.rep]}}`).join("");
 const slot = ((100 / NF).toFixed(4) * 1).toString();
 
-// Block caret, not underscore — the user's console/IDE taste. U+2588 is safe:
-// every mainstream monospace ships it, and it is the last glyph anyway.
-const overlay = TAGLINE
-  ? `<ellipse cx="${W / 2}" cy="${H / 2}" rx="${W * 0.36}" ry="${H * 0.36}" fill="url(#scrim)"/>` +
-    `<text class="name" x="${W / 2}" y="${H / 2}">${TAGLINE}<tspan class="cur">█</tspan></text>`
-  : "";
+// Scramble pool = the field's own ramp, so the decode looks native to the
+// artwork. A line's length never changes mid-decode (unresolved positions
+// hold a random glyph), so text-anchor:middle keeps it pinned in place; the
+// cut between lines of different lengths is the classic decoder-board look.
+const POOL = RAMP.flat();
+const NT = Math.round(DECODE_T * TFPS);
+const SLOT_T = DECODE_T + HOLD_T;
+const TDUR = TAGLINES.length * SLOT_T || DUR; // fallback only guards the pure-field keyframe math
+const overlay = TAGLINES.map((line, p) => {
+  const N = line.length;
+  const parts = [];
+  for (let f = 0; f < NT; f++) {
+    const L = Math.floor((f / NT) * N);
+    let tail = "";
+    for (let i = L; i < N; i++)
+      tail += line[i] === " " ? " " : POOL[Math.floor(jitter(i * 131 + f * 7 + p * 977 + 3) * POOL.length)];
+    parts.push(
+      `<text class="name tf" x="${W / 2}" y="${H / 2}" style="animation-delay:${(p * SLOT_T + f / TFPS).toFixed(2)}s">${esc(line.slice(0, L))}<tspan class="sc">${esc(tail)}</tspan></text>`,
+    );
+  }
+  // The settled line; the first one doubles as the prefers-reduced-motion still.
+  parts.push(
+    `<text class="name th${p === 0 ? " t-still" : ""}" x="${W / 2}" y="${H / 2}" style="animation-delay:${(p * SLOT_T + DECODE_T).toFixed(2)}s">${esc(line)}</text>`,
+  );
+  return parts.join("");
+}).join("");
 
-const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${TAGLINE || "ASCII plasma field"}">
-<title>${TAGLINE || "ASCII plasma field"}</title>
+const LABEL = TAGLINES[0] || "ASCII plasma field";
+const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xml:space="preserve" role="img" aria-label="${LABEL}">
+<title>${LABEL}</title>
 <style>
 text{font-family:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;text-rendering:optimizeSpeed;white-space:pre}
 .f text{font-size:${FONT}px;dominant-baseline:central}
@@ -174,11 +213,13 @@ ${bandFills}
 .f{visibility:hidden;animation:k ${DUR}s step-end infinite}
 @keyframes k{0%{visibility:visible}${slot}%{visibility:hidden}100%{visibility:hidden}}
 .name{font-size:30px;fill:#F5F6F8;dominant-baseline:central;text-anchor:middle;letter-spacing:1.5px}
-.cur{fill:${ACCENT};animation:blink 1.1s step-end infinite}
-@keyframes blink{50%{opacity:0}}
-@media (prefers-reduced-motion:reduce){.f,.cur{animation:none}.f-still{visibility:visible}}
+.sc{fill:${ACCENT}}
+.tf{visibility:hidden;animation:tk ${TDUR}s step-end infinite}
+@keyframes tk{0%{visibility:visible}${(100 / (TDUR * TFPS)).toFixed(4)}%{visibility:hidden}100%{visibility:hidden}}
+.th{visibility:hidden;animation:th ${TDUR}s step-end infinite}
+@keyframes th{0%{visibility:visible}${((HOLD_T / TDUR) * 100).toFixed(4)}%{visibility:hidden}100%{visibility:hidden}}
+@media (prefers-reduced-motion:reduce){.f,.tf,.th{animation:none}.f-still,.t-still{visibility:visible}}
 </style>
-<defs><radialGradient id="scrim"><stop offset="0" stop-color="${CANVAS}" stop-opacity=".92"/><stop offset="1" stop-color="${CANVAS}" stop-opacity="0"/></radialGradient></defs>
 <rect width="${W}" height="${H}" rx="12" fill="${CANVAS}"/>
 ${frames.join("\n")}
 ${overlay}
