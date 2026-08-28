@@ -48,7 +48,7 @@ const TAGLINES = [
   "let it exist",
   "make it work",
   "beyond the edge",
-  "todo: stars",
+  "counting stars",
 ]; // rotation order; [] for a pure field
 const FLF = join(HERE, "ansi-shadow.flf");
 const FONT_FILE = join(HERE, "field.woff2");
