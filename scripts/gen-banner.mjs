@@ -21,13 +21,18 @@
 //        --flavor=woff2 --no-hinting --layout-features='' --output-file=scripts/field.woff2
 //  - Taglines are set in figlet "ANSI Shadow" (caps only; scripts/ansi-shadow.flf),
 //    two-tone: solid blocks in the accent, the ═╝ shadow dimmer. Each line
-//    decodes left to right: a noise layer of ramp glyphs is wiped out while
-//    the settled line is wiped in, both by clip windows that step across the
-//    banner. Firefox ignores CSS transforms on a clipPath's children, so the
+//    decodes left to right behind a torn front: every figlet row has its own
+//    clip windows, stepping in whole columns along a shared uneven pace plus
+//    a bounded per-row wander. A band of cycling ramp glyphs (LEAD columns)
+//    runs ahead of the settled text, so the scramble itself sweeps in rather
+//    than standing there as a placeholder. Settled text, scramble band and
+//    knockout all ride the same per-row keyframes; only their clip rects
+//    differ. Firefox ignores CSS transforms on a clipPath's children, so the
 //    clipped group moves and an inner group counter-moves the glyphs.
 //  - Knockout: a mask clears the field around the letters (CUT px of stroke
 //    dilation), which keeps the tagline legible on any page colour and over
-//    the field's hot zones.
+//    the field's hot zones. It opens with the scramble front — opened up
+//    front, the letter-shaped hole would give the line away before it decodes.
 //  - Budget: keep banner.svg under 1 MiB raw. Raw ∝ frames × rows × columns;
 //    gzip barely grows with frames. The cost visitors actually pay is DOM
 //    (~8.5k text nodes) and repaint rate, so keep FPS × DUR modest.
@@ -63,6 +68,11 @@ const DECODE_T = 2.2; // seconds a line spends decoding
 const HOLD_T = 5.8; // seconds a settled line holds before the next one starts
 const TFPS = 20; // decode step rate; reads as noise below ~15
 const NOISE_FRAMES = 6; // distinct scramble frames cycled during decode
+const LEAD = 16; // tagline columns of scramble running ahead of the settled text
+const LEAD_VAR = 0.35; // per-row spread of LEAD, as a fraction of it
+const RAG = 3; // columns a row's front may stray either side of the mean front
+const RAG_TICKS = 3; // decode ticks between a row's wander knots; lower = twitchier
+const BURST = 0.85; // pace jitter of the mean front: 0 = even, 1 = from a stall to a double step
 const FONT = 14; // field glyph font-size, px
 const PX = FONT * 0.6; // column pitch = JetBrains Mono advance
 const PY = 16; // row pitch
@@ -117,6 +127,7 @@ const rgb = (() => {
 })();
 const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
 const num = (v) => (Math.round(v * 10) / 10).toString();
+const num2 = (v) => +v.toFixed(2); // decode offsets: whole tagline columns, and that pitch carries two decimals
 
 // figlet: header "flf2a$ height ... commentLines", then the printable ASCII
 // glyphs as `height` lines each, '@' end-marks, hardblank '$' = a space that
@@ -194,13 +205,71 @@ const maxCols = Math.max(0, ...figs.map((r) => r[0].length));
 const TFONT = +num(Math.min((W * TAG_FILL) / maxCols / 0.6, (H * TAG_MAX_H) / (TROWS * TAG_LH)));
 const TPX = TFONT * 0.6;
 const TPY = TFONT * TAG_LH;
-const ty = (r) => num(H / 2 - (TROWS * TPY) / 2 + TPY / 2 + r * TPY);
+const rowY = (r) => H / 2 - (TROWS * TPY) / 2 + TPY / 2 + r * TPY;
 const SLOT_T = DECODE_T + HOLD_T;
 const TDUR = TAGLINES.length * SLOT_T || DUR;
 const NT = Math.round(DECODE_T * TFPS);
 const pct = (s) => ((s / TDUR) * 100).toFixed(3);
 const POOL = RAMP.flat();
 const isShadow = (c) => "═║╔╗╚╝".includes(c);
+
+// Decode geometry, in whole tagline columns so a window never slices a glyph.
+// Each tagline sits in a wrapper translated to its own left edge, so text
+// starts at local x=0 and one set of keyframes serves every line: a front
+// travels TRAVEL columns from START_COLS left of the text (scramble band and
+// knockout margin still off the letters) to the widest line's right edge.
+// Shorter lines simply finish sooner — the pace per column is constant.
+const leads = Array.from({ length: TROWS }, (_, i) => Math.max(1, Math.round(LEAD * (1 + LEAD_VAR * (2 * jitter(i * 61 + 7) - 1)))));
+const START_COLS = Math.max(0, ...leads) + 2; // +1 column of knockout margin, +1 for its stroke
+const TRAVEL = START_COLS + maxCols;
+const START = START_COLS * TPX;
+const END = TRAVEL * TPX;
+const FAR = START + END; // left reach of the open-ended clips: covers the text at full travel
+// Mean front: uneven pace, over-travelling by RAG at both ends so every row
+// starts hidden and lands on its own tick instead of snapping on the last one.
+const meanFront = (() => {
+  const pace = Array.from({ length: NT }, (_, k) => 1 + BURST * (2 * jitter(k * 53 + 11) - 1));
+  const total = pace.reduce((a, b) => a + b, 0);
+  let acc = 0;
+  return [-RAG, ...pace.map((v) => -RAG + ((acc += v) / total) * (TRAVEL + 2 * RAG))];
+})();
+// Row front per tick: the mean plus a wander interpolated between random
+// knots, clamped to the travel; a row only ever advances.
+const rowFront = (pattern) => {
+  const knot = (j) => 2 * jitter(pattern * 4099 + j * 61 + 3) - 1;
+  const out = [0];
+  for (let k = 1; k <= NT; k++) {
+    const j = Math.floor(k / RAG_TICKS);
+    const u = (k % RAG_TICKS) / RAG_TICKS;
+    const wander = RAG * (knot(j) * (1 - u) + knot(j + 1) * u);
+    out.push(Math.min(TRAVEL, Math.max(out[k - 1], Math.round(meanFront[k] + wander))));
+  }
+  return out;
+};
+const fronts = Array.from({ length: TROWS }, (_, i) => rowFront(i));
+// Keyframes hold (step-end) between stops, so ticks where the row stalls need
+// none: decode, hold to the slot's end, snap back to hidden.
+const frontKeyframes = (name, steps, sign) => {
+  let css = `@keyframes ${name}{0%{transform:none}`;
+  for (let k = 1; k <= NT; k++)
+    if (steps[k] !== steps[k - 1]) css += `${pct(k / TFPS)}%{transform:translateX(${num2(sign * steps[k] * TPX)}px)}`;
+  return `${css}${pct(SLOT_T)}%{transform:none}100%{transform:none}}`;
+};
+// Which front pattern each row rides is reshuffled per tagline, so the tear
+// doesn't repeat line after line at no cost in keyframes.
+const shuffled = (n, seed) => {
+  const a = Array.from({ length: n }, (_, i) => i);
+  for (let i = n - 1; i > 0; i--) {
+    const j = Math.floor(jitter(seed * 101 + i * 7 + 29) * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+};
+// Scramble frames sit in a vertical strip that steps behind the row's band
+// clip: one animation per row instead of one per frame. Two row pitches keep
+// the neighbouring frames' glyphs clear of the band.
+const STRIP = Math.ceil(2 * TPY);
+const BAND = 1.5 * TFONT; // band clip height; the em box spans 1.32em
 
 // Row → runs: solid blocks as bare text, shadow strokes in a dim tspan.
 // Spaces attach to the current run so they never open one of their own.
@@ -228,42 +297,61 @@ const runs = (row) => {
 const overlay = [];
 const cuts = [];
 figs.forEach((rows, p) => {
-  const x = num((W - rows[0].length * TPX) / 2);
-  const delay = `${(p * SLOT_T).toFixed(1)}s`;
-  const settled = rows.map((r, i) => `<text class="tg tx" x="${x}" y="${ty(i)}">${runs(r.trimEnd())}</text>`).join("");
-  const noise = [];
-  for (let k = 0; k < NOISE_FRAMES; k++) {
-    const lines = rows.map((r, i) => {
-      let s = "";
-      for (let c = 0; c < r.length; c++)
-        s += r[c] === " " ? " " : POOL[Math.floor(jitter(p * 7919 + k * 131 + i * 977 + c * 31 + 5) * POOL.length)];
-      return `<text class="tg nz" x="${x}" y="${ty(i)}">${esc(s.trimEnd())}</text>`;
-    });
-    noise.push(`<g class="nf" style="animation-delay:${(k / TFPS).toFixed(2)}s">${lines.join("")}</g>`);
-  }
+  const wrap = (body) => `<g transform="translate(${num((W - rows[0].length * TPX) / 2)})">${body}</g>`;
+  const pattern = shuffled(TROWS, p);
   // Clip window: the clipped group slides (Firefox ignores transforms on the
   // clipPath's own children), the inner group counter-slides the glyphs.
-  const win = (cls, body) =>
-    `<g class="${cls}${p === 0 ? ` ${cls}0` : ""}" style="animation-delay:${delay}" clip-path="url(#c)">` +
-    `<g class="${cls}i${p === 0 ? ` ${cls}i0` : ""}" style="animation-delay:${delay}">${body}</g></g>`;
-  overlay.push(win("sx", noise.join("")) + win("rv", settled));
-  if (CUT > 0)
-    cuts.push(
-      `<g class="ct${p === 0 ? " ct0" : ""}" style="animation-delay:${delay}">` +
-      rows.map((r, i) => `<text class="tg" x="${x}" y="${ty(i)}">${esc(r.trimEnd())}</text>`).join("") +
-      `</g>`,
+  // d<p> delays the pair to the tagline's slot; e/ei pin the first tagline
+  // open under prefers-reduced-motion.
+  const win = (i, clip, body) =>
+    `<g class="r${pattern[i]}${p ? ` d${p}` : " e"}" clip-path="url(#${clip})">` +
+    `<g class="q${pattern[i]}${p ? ` d${p}` : " ei"}">${body}</g></g>`;
+  const lines = [];
+  const cutLines = [];
+  rows.forEach((r, i) => {
+    const row = r.trimEnd();
+    if (!row) return;
+    let strip = "";
+    for (let k = 0; k < NOISE_FRAMES; k++) {
+      let s = "";
+      for (let c = 0; c < row.length; c++)
+        s += row[c] === " " ? " " : POOL[Math.floor(jitter(p * 7919 + k * 131 + i * 977 + c * 31 + 5) * POOL.length)];
+      strip += `<text class="tg nz" y="${num(rowY(i) + k * STRIP)}">${esc(s)}</text>`;
+    }
+    lines.push(
+      win(i, `n${i}`, `<g class="st">${strip}</g>`) +
+      win(i, "s", `<text class="tg tx" y="${num(rowY(i))}">${runs(row)}</text>`),
     );
+    cutLines.push(win(i, `m${i}`, `<text class="tg" y="${num(rowY(i))}">${esc(row)}</text>`));
+  });
+  overlay.push(wrap(lines.join("")));
+  if (CUT > 0) cuts.push(wrap(cutLines.join("")));
 });
+// Clip rects live in the sliding group's space, offset so that zero travel
+// hides everything: settled text shows left of the front, the scramble in a
+// band of the row's lead right of it, the knockout up to a column past the band.
+const rect = (x, w, y = 0, h = H) => `<rect x="${num2(x)}"${y ? ` y="${num2(y)}"` : ""} width="${num2(w)}" height="${num2(h)}"/>`;
+const clips = !TAGLINES.length ? "" :
+  `<clipPath id="s">${rect(-FAR, FAR - START)}</clipPath>` +
+  leads.map((lead, i) =>
+    `<clipPath id="n${i}">${rect(-START, lead * TPX, rowY(i) - BAND / 2, BAND)}</clipPath>` +
+    (CUT > 0 ? `<clipPath id="m${i}">${rect(-FAR, FAR - START + (lead + 1) * TPX)}</clipPath>` : ""),
+  ).join("");
 
 const font = readFileSync(FONT_FILE).toString("base64");
 const LABEL = TAGLINES[0] ?? "ASCII field";
 const mask = cuts.length
   ? `<mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="${W}" height="${H}"><rect width="${W}" height="${H}" fill="#fff"/>${cuts.join("")}</mask>`
   : "";
-// Timelines: the field flips on DUR; every tagline part runs on TDUR with its
-// slot's delay. Reveal/scramble windows step across in NT jumps over DECODE_T,
-// hold, then snap back at the slot's end (step-start) — no visibility toggles,
-// so nested groups can't leak through a hidden parent.
+// Timelines: the field flips on DUR; every tagline window runs its row's front
+// keyframes on TDUR with its slot's delay — no visibility toggles, so nested
+// groups can't leak through a hidden parent. The d<p> rules must follow the
+// r/q ones: the `animation` shorthand resets the delay.
+const frontCss = fronts.map((steps, i) =>
+  `.r${i}{animation:r${i} ${TDUR}s step-end infinite}.q${i}{animation:q${i} ${TDUR}s step-end infinite}` +
+  frontKeyframes(`r${i}`, steps, 1) + frontKeyframes(`q${i}`, steps, -1),
+).join("\n");
+const delayCss = TAGLINES.slice(1).map((_, i) => `.d${i + 1}{animation-delay:${num2((i + 1) * SLOT_T)}s}`).join("");
 const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xml:space="preserve" role="img" aria-label="${LABEL}">
 <title>${LABEL}</title>
 <style>
@@ -275,20 +363,14 @@ ${bandFills}
 @keyframes k{0%{visibility:visible}${(100 / NF).toFixed(3)}%{visibility:hidden}100%{visibility:hidden}}
 .tg{font-size:${TFONT}px}
 .tx{fill:${ACCENT}}.s{fill:${rgb(SHADOW_A)}}.nz{fill:${rgb(NOISE_A)}}
-.rv{transform:translateX(${-W}px);animation:rv ${TDUR}s infinite}.rvi{transform:translateX(${W}px);animation:rvi ${TDUR}s infinite}
-@keyframes rv{0%{transform:translateX(${-W}px);animation-timing-function:steps(${NT})}${pct(DECODE_T)}%{transform:none;animation-timing-function:step-end}${pct(SLOT_T)}%{transform:none;animation-timing-function:step-start}100%{transform:translateX(${-W}px)}}
-@keyframes rvi{0%{transform:translateX(${W}px);animation-timing-function:steps(${NT})}${pct(DECODE_T)}%{transform:none;animation-timing-function:step-end}${pct(SLOT_T)}%{transform:none;animation-timing-function:step-start}100%{transform:translateX(${W}px)}}
-.sx{transform:translateX(${W}px);animation:sx ${TDUR}s infinite}.sxi{transform:translateX(${-W}px);animation:sxi ${TDUR}s infinite}
-@keyframes sx{0%{transform:none;animation-timing-function:steps(${NT})}${pct(DECODE_T)}%{transform:translateX(${W}px)}100%{transform:translateX(${W}px)}}
-@keyframes sxi{0%{transform:none;animation-timing-function:steps(${NT})}${pct(DECODE_T)}%{transform:translateX(${-W}px)}100%{transform:translateX(${-W}px)}}
-.nf{visibility:hidden;animation:nk ${(NOISE_FRAMES / TFPS).toFixed(2)}s step-end infinite}
-@keyframes nk{0%{visibility:visible}${(100 / NOISE_FRAMES).toFixed(3)}%{visibility:hidden}100%{visibility:hidden}}
-.ct text{fill:#000;stroke:#000;stroke-width:${CUT};stroke-linejoin:round}
-.ct{visibility:hidden;animation:ck ${TDUR}s step-end infinite}
-@keyframes ck{0%{visibility:visible}${pct(SLOT_T)}%{visibility:hidden}100%{visibility:hidden}}
-@media (prefers-reduced-motion:reduce){.f,.rv,.rvi,.sx,.sxi,.nf,.ct{animation:none}.f-still,.ct0{visibility:visible}.rv0,.rvi0{transform:none}}
+${frontCss}
+${delayCss}
+.st{animation:nk ${num2(NOISE_FRAMES / TFPS)}s steps(${NOISE_FRAMES}) infinite}
+@keyframes nk{to{transform:translateY(${-NOISE_FRAMES * STRIP}px)}}
+mask text{fill:#000;stroke:#000;stroke-width:${CUT};stroke-linejoin:round}
+@media (prefers-reduced-motion:reduce){.f,g[clip-path],g[clip-path]>g,.st{animation:none}.f-still{visibility:visible}.e{transform:translateX(${num2(END)}px)}.ei{transform:translateX(${num2(-END)}px)}}
 </style>
-<defs><clipPath id="c"><rect width="${W}" height="${H}"/></clipPath>${mask}</defs>
+<defs>${clips}${mask}</defs>
 <g${mask ? ' mask="url(#cut)"' : ""}>
 ${frames.join("\n")}
 </g>
