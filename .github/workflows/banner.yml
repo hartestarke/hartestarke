@@ -1,0 +1,37 @@
+name: banner
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - banner.config.mjs
+      - .github/workflows/banner.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: banner
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npx --yes github:hartestarke/ascii-banner#v0.1.0 build
+      - name: Commit banner.svg if it changed
+        run: |
+          git add banner.svg
+          if git diff --cached --quiet -- banner.svg; then
+            echo "banner.svg unchanged"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Rebuild banner"
+          git push
