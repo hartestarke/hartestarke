@@ -2,7 +2,7 @@ name: banner
 
 on:
   push:
-    branches: [master]
+    branches: [main]
     paths:
       - banner.config.mjs
       - .github/workflows/banner.yml
