@@ -23,7 +23,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      - run: npx --yes github:hartestarke/ascii-banner#v0.2.0 build
+      - run: npx --yes github:hartestarke/ascii-banner#v0.3.0 build
       - name: Commit banner.svg if it changed
         run: |
           git add banner.svg
